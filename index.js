@@ -9,7 +9,7 @@ const fs = require('fs');
 const files = {};
 let timer;
 
-module.exports = (source, map) => {
+module.exports = function (source, map) {
   if (this.cacheable) this.cacheable();
   const resourcePath = this.resourcePath;
   const query = loaderUtils.parseQuery(this.query);
