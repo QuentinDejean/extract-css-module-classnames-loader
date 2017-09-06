@@ -1,23 +1,24 @@
-var assign = require('lodash.assign');
-var processCss = requireFromLocalOrParent('css-loader/lib/processCss');
-var loaderUtils = require('loader-utils');
-var mkpath = require('mkpath');
-var path = require('path');
-var fs = require('fs');
+const assign = require('lodash.assign');
+const processCss = requireFromLocalOrParent('css-loader/lib/processCss');
+const getLocalIdent = requireFromLocalOrParent('css-loader/lib/getLocalIdent');
+const loaderUtils = require('loader-utils');
+const mkpath = require('mkpath');
+const path = require('path');
+const fs = require('fs');
 
-var files = {};
-var timer;
+const files = {};
+let timer;
 
-module.exports = function (source, map) {
+module.exports = (source, map) => {
   if (this.cacheable) this.cacheable();
-  var resourcePath = this.resourcePath;
-  var query = loaderUtils.parseQuery(this.query);
-  var outputFile = query.outputFile;
-  var rootPath = query.rootPath || '/';
-  var minimalJson = !!query.minimalJson;
-  var writeDebounceMs = query.writeDebounceMs || 100;
-  var options = this.options.extractCssModuleClassnames || {};
-  var processOpts = {
+  const resourcePath = this.resourcePath;
+  const query = loaderUtils.parseQuery(this.query);
+  const outputFile = query.outputFile;
+  const rootPath = query.rootPath || '/';
+  const minimalJson = !!query.minimalJson;
+  const writeDebounceMs = query.writeDebounceMs || 100;
+  const options = this.options.extractCssModuleClassnames || {};
+  const processOpts = {
     mode: 'local',
     loaderContext: {
       options: {
@@ -33,65 +34,71 @@ module.exports = function (source, map) {
     },
     query: query
   }
-  var aliases = getAliases(this.options);
-  var importPath = path.relative(rootPath, resourcePath);
+  const aliases = getAliases(this.options);
+  const importPath = path.relative(rootPath, resourcePath);
+  const resourceName = loaderUtils.interpolateName(processOpts.loaderContext, '[name]', {})
+  files[resourceName] = files[resourceName] || {};
 
-  files[importPath] = files[importPath] || {};
 
   processCss(source, null, processOpts, function(err, result) {
     if (err) throw err;
 
+    const extractClass = extractClassName(result)
     Object.keys(result.exports).forEach(function(key) {
 
-      var classes = result.exports[key].split(/\s+/);
-
-      files[importPath][key] = classes.map(function (className) {
-
-        if (isClassName(result, className)) {
-          return className;
-        }
-
-        var importItem = getImportItem(result, className);
-        var resolvedPath = resolvePath(importItem.url);
-        var composesPath = resolvedPath || path.resolve(path.dirname(resourcePath), importItem.url);
-
-        return [ path.relative(rootPath, composesPath), importItem.export ];
-
-      });
+      const classes = result.exports[key].split(/\s+/);
+      
+      if (classes.length === 0) {
+        files[resourceName][key] = {}
+      } else if (classes.length === 1) {
+        files[resourceName][key] = extractClass(classes[0])
+      } else {
+        files[resourceName][key] = classes.map(extractClass)
+      }
 
     });
 
-    if (options.onOutput && typeof options.onOutput === 'function') {
-      options.onOutput(resourcePath, files[importPath], files);
-    } else {
-      if (!outputFile) {
-        throw new Error('Missing outputFile parameter in extract-css-module-classnames-loader');
-      }
-      clearTimeout(timer);
-      timer = setTimeout(function () {
-        mkpath(path.dirname(outputFile), function (err) {
-          if (err && err.code !== 'EEXIST') throw err;
-          var json;
-          if (minimalJson) {
-            json = JSON.stringify(files);
-          } else {
-            json = JSON.stringify(files, null, 2);
-          }
-          fs.writeFile(outputFile, json, function (err) {
-            if (err) throw err;
-            options.onAfterOutput && options.onAfterOutput(resourcePath, files[importPath], files);
-          });
-        });
-      }, writeDebounceMs);
+    if (!outputFile) {
+      throw new Error('Missing outputFile parameter in extract-css-module-classnames-loader');
     }
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      mkpath(path.dirname(outputFile), function (err) {
+        if (err && err.code !== 'EEXIST') throw err;
+        let json;
+        if (minimalJson) {
+          json = JSON.stringify(files);
+        } else {
+          json = JSON.stringify(files, null, 2);
+        }
+        fs.writeFile(outputFile, json, function (err) {
+          if (err) throw err;
+          options.onAfterOutput && options.onAfterOutput(resourcePath, files[resourceName], files);
+        });
+      });
+    }, writeDebounceMs);
   });
 
   function getAliases (options) {
     // TODO: Investigate if there is a way to leverage
     // the Webpack API to get all the aliases
-    var resolveAliases = options.resolve && options.resolve.alias;
-    var resolveLoaderAliases = options.resolveLoader && options.resolveLoader.alias;
+    const resolveAliases = options.resolve && options.resolve.alias;
+    const resolveLoaderAliases = options.resolveLoader && options.resolveLoader.alias;
     return assign({}, resolveAliases || {}, resolveLoaderAliases || {});
+  }
+
+  function extractClassName(result) {
+    return (className) => {
+      if (isClassName(result, className)) {
+        return className;
+      }
+
+      const importItem = getImportItem(result, className);
+      const resolvedPath = resolvePath(importItem.url);
+      const composesPath = resolvedPath || path.resolve(path.dirname(resourcePath), importItem.url);
+
+      return [path.relative(rootPath, composesPath), importItem.export];
+    }
   }
 
   function isClassName (result, className) {
@@ -110,16 +117,16 @@ module.exports = function (source, map) {
     // TODO: Investigate if there is a way to leverage
     // the Webpack API to handle the alias resolution instead
     return Object.keys(aliases).reduce(function (prev, alias) {
-      var regex = new RegExp('^' + alias, 'i');
+      const regex = new RegExp('^' + alias, 'i');
       if (!regex.test(importPath)) { return prev }
-      var unaliasedPath = importPath.replace(regex, aliases[alias]);
+      const unaliasedPath = importPath.replace(regex, aliases[alias]);
       return path.resolve(rootPath, unaliasedPath);
     }, '');
   }
 
   function getImportItem (result, className) {
-    var match = result.importItemRegExp.exec(className);
-    var idx = +match[1];
+    const match = result.importItemRegExp.exec(className);
+    const idx = +match[1];
     return result.importItems[idx];
   }
 
@@ -129,7 +136,7 @@ module.exports = function (source, map) {
 // Needed to make require work with `npm link` since `css-loader`
 // is a peerDependency
 function requireFromLocalOrParent(id) {
-  var parent = module;
+  let parent = module;
   for (; parent; parent = parent.parent) {
     try {
       return parent.require(id);
